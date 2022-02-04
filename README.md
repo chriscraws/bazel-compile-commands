@@ -25,6 +25,6 @@ Ensure you have at least Go 1.17 installed.
 
 ## Glossary
 
-[Compilation Database](https://clang.llvm.org/docs/JSONCompilationDatabase.html)
-[Bazel](https://bazel.build/)
-[Bazel Action Query](https://docs.bazel.build/versions/main/aquery.html)
+ - [Compilation Database](https://clang.llvm.org/docs/JSONCompilationDatabase.html)
+ - [Bazel](https://bazel.build/)
+ - [Bazel Action Query](https://docs.bazel.build/versions/main/aquery.html)
