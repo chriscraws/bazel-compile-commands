@@ -1,0 +1,10 @@
+# Bazel build targets for bazel-compile-commands
+
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_binary(
+    name = "generate_compile_commands",
+    embedsrcs = ["src_paths.cquery.bzl"],
+    srcs = ["generate_compile_commands.go"],
+    visibility = ["//visibility:public"],
+)
