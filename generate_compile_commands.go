@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -46,9 +47,9 @@ type depSetOfFiles struct {
 // type derived from compile_commands.json format
 
 type compileCommand struct {
-	Directory string `json:"directory"`
-	Command   string `json:"command"`
-	File      string `json:"file"`
+	Directory string   `json:"directory"`
+	Arguments []string `json:"arguments"`
+	File      string   `json:"file"`
 }
 
 // internal types
@@ -77,6 +78,30 @@ func getBazelInfo(v string) string {
 	return strings.TrimSpace(out.String())
 }
 
+func getXcodeSDKPath(dir string, sdk string) string {
+	out := new(strings.Builder)
+	cmd := exec.Command("xcrun", "--sdk", sdk, "--show-sdk-path")
+	cmd.Stdout = out
+	cmd.Stderr = os.Stderr
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		panic(fmt.Errorf("could not get sdk path: %s", err))
+	}
+	return strings.TrimSpace(out.String())
+}
+
+func getXcodeDeveloperDir(dir string) string {
+	out := new(strings.Builder)
+	cmd := exec.Command("xcode-select", "-p")
+	cmd.Stdout = out
+	cmd.Stderr = os.Stderr
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		panic(fmt.Errorf("could not get xcode developer directory: %s", err))
+	}
+	return strings.TrimSpace(out.String())
+}
+
 func main() {
 	// determine the workspace path if it's not set already
 	if workspace == "" {
@@ -86,56 +111,85 @@ func main() {
 	outputBaseDir := getBazelInfo("output_base")
 	binDir := getBazelInfo("bazel-bin")
 
-	out := new(strings.Builder)
-	cmd := exec.Command(
-		"bazel",
-		"aquery",
-		`mnemonic("CppCompile", //...)`,
-		"--output=jsonproto",
-	)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = out
-	cmd.Dir = workspace
-
-	if err := cmd.Run(); err != nil {
-		panic(fmt.Errorf("failed to run Bazel: %s", err))
-	}
-
-	var container actionGraphContainer
-	if err := json.Unmarshal([]byte(out.String()), &container); err != nil {
-		panic(fmt.Errorf("failed to parse aquery output: %s", err))
+	var xcodeSDKPath string
+	var xcodeDeveloperDir string
+	switch runtime.GOOS {
+	case "darwin":
+		xcodeSDKPath = getXcodeSDKPath(executionRoot, "macosx")
+		xcodeDeveloperDir = getXcodeDeveloperDir(executionRoot)
 	}
 
 	targetLabels := map[int]string{}
-	for _, target := range container.Targets {
-		targetLabels[target.ID] = target.Label
+	ccTargets := map[string]*ccTarget{}
+
+	queryMnemonic := func(n string) {
+
+		out := new(strings.Builder)
+		cmd := exec.Command(
+			"bazel",
+			"aquery",
+			fmt.Sprintf(`mnemonic("%s", //...)`, n),
+			"--output=jsonproto",
+		)
+		cmd.Stderr = os.Stderr
+		cmd.Stdout = out
+		cmd.Dir = workspace
+
+		if err := cmd.Run(); err != nil {
+			panic(fmt.Errorf("failed to run Bazel: %s", err))
+		}
+
+		var container actionGraphContainer
+		if err := json.Unmarshal([]byte(out.String()), &container); err != nil {
+			panic(fmt.Errorf("failed to parse aquery output: %s", err))
+		}
+
+		for _, target := range container.Targets {
+			targetLabels[target.ID] = target.Label
+		}
+
+		for _, action := range container.Actions {
+			if action.Mnemonic != n {
+				continue
+			}
+			label, ok := targetLabels[action.TargetID]
+			if !ok {
+				panic(fmt.Errorf("missing label (%d) in aquery output", action.TargetID))
+			}
+			var args []string
+			switch n {
+			case "ObjcCompile":
+				args = []string{"clang", "-xobjective-c++"}
+			case "CppCompile":
+				args = []string{"clang", "-xc++"}
+			}
+			for i := 1; i < len(action.Arguments); i++ {
+				arg := action.Arguments[i]
+				switch {
+				case arg == "-c":
+					i++
+					continue
+				case strings.HasPrefix(arg, "-Ibazel-out"):
+					arg = "-I" + path.Join(outputBaseDir, strings.TrimPrefix(arg, "-I"))
+				case strings.HasPrefix(arg, "external/") ||
+					strings.HasPrefix(arg, "bazel-out"):
+					arg = path.Join(outputBaseDir, arg)
+				}
+				switch runtime.GOOS {
+				case "darwin":
+					arg = strings.ReplaceAll(arg, "__BAZEL_XCODE_SDKROOT__", xcodeSDKPath)
+					arg = strings.ReplaceAll(arg, "__BAZEL_XCODE_DEVELOPER_DIR__", xcodeDeveloperDir)
+				}
+				args = append(args, arg)
+			}
+			ccTargets[label] = &ccTarget{
+				args: args,
+			}
+		}
 	}
 
-	ccTargets := map[string]*ccTarget{}
-	for _, action := range container.Actions {
-		if action.Mnemonic != "CppCompile" {
-			continue
-		}
-		label, ok := targetLabels[action.TargetID]
-		if !ok {
-			panic(fmt.Errorf("missing label (%d) in aquery output", action.TargetID))
-		}
-		var args []string
-		for i := 0; i < len(action.Arguments); i++ {
-			arg := action.Arguments[i]
-			switch {
-			case arg == "-c":
-				i++
-				continue
-			case strings.HasPrefix(arg, "external/"):
-				arg = path.Join(outputBaseDir, arg)
-			}
-			args = append(args, arg)
-		}
-		ccTargets[label] = &ccTarget{
-			args: args,
-		}
-	}
+	queryMnemonic("CppCompile")
+	queryMnemonic("ObjcCompile")
 
 	labels := make(sort.StringSlice, len(ccTargets))
 	{
@@ -204,16 +258,15 @@ func main() {
 			compileCommands = append(compileCommands, compileCommand{
 				Directory: workspace,
 				File:      src,
-				Command: strings.Join(append(target.args,
+				Arguments: append(target.args,
 					"-iquote",
 					binDir,
 					"-iquote",
 					executionRoot,
 					"-iquote",
 					outputBaseDir,
-					"-xc++",
 					src,
-				), " "),
+				),
 			})
 		}
 	}

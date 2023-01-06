@@ -11,6 +11,8 @@ _extensions = [
     "hpp",
     "hxx",
     "ipp",
+    "m",
+    "mm",
 ]
 
 def format(target):

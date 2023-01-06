@@ -53,9 +53,8 @@ go_register_toolchains(version = "1.17.6")
 
 http_archive(
     name = "bazel_compile_commands",
-    url = "https://github.com/chriscraws/bazel-compile-commands/archive/fda596bb433d4b14933294bef0eb9a79cb53bc0e.zip",
-    strip_prefix = "bazel-compile-commands-fda596bb433d4b14933294bef0eb9a79cb53bc0e",
-    sha256 = "f4b1acc879538f47e3ee5249c1cdb66a540eb22b01778bd153adb8a7cfe64da6",
+    url = "https://github.com/chriscraws/bazel-compile-commands/archive/main.zip",
+    strip_prefix = "bazel-compile-commands-main",
 )
 ```
 
