@@ -161,7 +161,7 @@ func main() {
 			case "ObjcCompile":
 				args = []string{"clang", "-xobjective-c++"}
 			case "CppCompile":
-				args = append(action.Arguments[0:1], "-xc++")
+				args = []string{action.Arguments[0], "-xc++"}
 			}
 			for i := 1; i < len(action.Arguments); i++ {
 				arg := action.Arguments[i]
